@@ -1,0 +1,100 @@
+@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=Manrope:wght@400;500;600;700;800&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    color: #0f172a;
+  }
+
+  * {
+    @apply border-slate-200;
+  }
+
+  body {
+    @apply min-h-screen bg-slate-50 text-slate-900 antialiased;
+    font-family: 'Manrope', system-ui, sans-serif;
+  }
+
+  h1, h2, h3, h4, .font-display {
+    font-family: 'Space Grotesk', system-ui, sans-serif;
+  }
+}
+
+@layer components {
+  .card {
+    @apply rounded-[28px] border border-slate-200 bg-white shadow-[0_14px_40px_rgba(15,23,42,0.06)];
+  }
+
+  .btn-primary {
+    @apply rounded-2xl bg-slate-950 px-5 py-3 font-semibold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50;
+  }
+
+  .btn-secondary {
+    @apply rounded-2xl border border-slate-200 bg-white px-5 py-3 font-semibold text-slate-700 transition hover:border-slate-300 hover:bg-slate-50;
+  }
+
+  .btn-ghost {
+    @apply rounded-2xl px-4 py-2 font-medium text-slate-500 transition hover:bg-slate-100 hover:text-slate-900;
+  }
+
+  .input {
+    @apply w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-slate-900 placeholder:text-slate-400 focus:border-teal-500 focus:outline-none focus:ring-4 focus:ring-teal-500/15;
+  }
+
+  .badge {
+    @apply inline-flex items-center rounded-full px-3 py-1 text-xs font-semibold;
+  }
+
+  .pill-success {
+    @apply bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200;
+  }
+
+  .pill-warn {
+    @apply bg-amber-50 text-amber-700 ring-1 ring-amber-200;
+  }
+
+  .pill-muted {
+    @apply bg-slate-100 text-slate-600 ring-1 ring-slate-200;
+  }
+
+  .score-chip {
+    @apply flex h-12 items-center justify-center rounded-2xl border border-slate-200 bg-white text-base font-semibold text-slate-600 transition hover:border-teal-300 hover:text-teal-700;
+  }
+
+  .score-chip.active {
+    @apply border-slate-950 bg-slate-950 text-white shadow-[0_10px_22px_rgba(15,23,42,0.16)];
+  }
+}
+
+.animate-fade-in {
+  animation: fadeIn 0.28s ease-out both;
+}
+
+.toast-slide {
+  animation: toastIn 0.22s ease-out both;
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes toastIn {
+  from {
+    opacity: 0;
+    transform: translateY(14px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
