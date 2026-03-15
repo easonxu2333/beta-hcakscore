@@ -1,7 +1,7 @@
 const express = require('express');
 const cors = require('cors');
 const path = require('path');
-const { db, initDb } = require('./db');
+const { db, initDb, resetDemoData, seedDemoData } = require('./db');
 const {
   buildCriterionWeights,
   computeLeaderboard,
@@ -144,10 +144,36 @@ function getParticipantById(participantId) {
 
 function getJudges() {
   return db.prepare(`
-    SELECT id, judge_code, name, email, role, weight, assigned_track, created_at
+    SELECT id, judge_code, name, email, role, weight, assigned_track, account_active, password, created_at
     FROM judges
     ORDER BY created_at ASC
-  `).all();
+  `).all().map((judge) => ({
+    ...judge,
+    id: Number(judge.id),
+    weight: Number(judge.weight || 1),
+    account_active: Boolean(judge.account_active),
+  }));
+}
+
+function getTracks() {
+  return db.prepare(`
+    SELECT id, name, is_active, sort_order, created_at
+    FROM tracks
+    ORDER BY sort_order ASC, name ASC
+  `).all().map((track) => ({
+    ...track,
+    id: Number(track.id),
+    is_active: Boolean(track.is_active),
+  }));
+}
+
+function ensureTrackExists(name) {
+  if (!name || !String(name).trim()) return;
+  const normalized = String(name).trim();
+  db.prepare(`
+    INSERT OR IGNORE INTO tracks (name, is_active, sort_order)
+    VALUES (?, 1, COALESCE((SELECT MAX(sort_order) + 1 FROM tracks), 1))
+  `).run(normalized);
 }
 
 function getScores() {
@@ -183,12 +209,55 @@ function getScores() {
   }));
 }
 
+function getAwardSelections() {
+  return db.prepare(`
+    SELECT
+      a.id,
+      a.award_type,
+      a.award_key,
+      a.award_label,
+      a.track,
+      a.project_id,
+      a.created_at,
+      p.name AS project_name,
+      p.team_name,
+      p.table_number,
+      p.track AS project_track
+    FROM award_selections a
+    JOIN projects p ON p.id = a.project_id
+    ORDER BY a.award_type ASC, a.award_label ASC
+  `).all().map((award) => ({
+    ...award,
+    id: Number(award.id),
+    project_id: Number(award.project_id),
+  }));
+}
+
 function getLeaderboardPayload(filters = {}) {
   const settings = getSettings();
   const projects = getProjects();
   const scores = getScores();
+  const manualAwards = getAwardSelections();
   const criterionWeights = buildCriterionWeights(settings.criteria_weights);
   let leaderboard = computeLeaderboard(projects, scores, settings, criterionWeights);
+
+  const awardsByProject = manualAwards.reduce((map, award) => {
+    const current = map.get(award.project_id) || [];
+    current.push(award);
+    map.set(award.project_id, current);
+    return map;
+  }, new Map());
+
+  leaderboard = leaderboard.map((entry) => {
+    const awards = awardsByProject.get(entry.id) || [];
+    const trackWinnerAward = awards.find((award) => award.award_type === 'track_winner');
+    return {
+      ...entry,
+      awards,
+      is_reward_project: awards.some((award) => award.award_type === 'reward_project'),
+      track_winner_label: trackWinnerAward ? trackWinnerAward.award_label : null,
+    };
+  });
 
   if (filters.track && filters.track !== 'all') {
     leaderboard = leaderboard.filter((entry) => entry.track === filters.track);
@@ -202,13 +271,17 @@ function getLeaderboardPayload(filters = {}) {
     settings,
     leaderboard,
     winners,
-    tracks: Array.from(new Set(projects.map((project) => project.track))),
+    awards: {
+      rewardProjects: manualAwards.filter((award) => award.award_type === 'reward_project'),
+      trackWinners: manualAwards.filter((award) => award.award_type === 'track_winner'),
+    },
+    tracks: getTracks().filter((track) => track.is_active).map((track) => track.name),
   };
 }
 
 function getJudgeByCode(judgeCode) {
   return db.prepare(`
-    SELECT id, judge_code, name, email, role, weight, assigned_track, created_at
+    SELECT id, judge_code, name, email, role, weight, assigned_track, account_active, password, created_at
     FROM judges
     WHERE judge_code = ?
   `).get(judgeCode);
@@ -280,40 +353,14 @@ function toCsv(rows) {
 }
 
 api.get('/config', (_req, res) => {
-  res.json(getSettings());
+  res.json({
+    ...getSettings(),
+    tracks: getTracks().filter((track) => track.is_active).map((track) => track.name),
+  });
 });
 
-api.post('/participants/register', (req, res) => {
-  const { name, email, password, teamName, schoolName } = req.body;
-  if (!name || !email || !password || !teamName) {
-    return res.status(400).json({ error: 'Name, email, password, and team name are required' });
-  }
-
-  const existing = getParticipantByEmail(email);
-  if (existing) {
-    return res.status(400).json({ error: 'An account already exists for this email' });
-  }
-
-  const insertUser = db.prepare(`
-    INSERT INTO users (name, email, password_hash, role, status)
-    VALUES (?, ?, ?, 'participant', 'active')
-  `);
-  const userResult = insertUser.run(name.trim(), email.trim(), password);
-  db.prepare(`
-    INSERT INTO participants (user_id, team_name, contact_email, school_name)
-    VALUES (?, ?, ?, ?)
-  `).run(Number(userResult.lastInsertRowid), teamName.trim(), email.trim(), schoolName || 'UC Berkeley');
-
-  res.json(getParticipantByEmail(email));
-});
-
-api.post('/participants/login', (req, res) => {
-  const { email, password } = req.body;
-  const participant = getParticipantByEmail(email);
-  if (!participant || participant.password_hash !== password || participant.status !== 'active') {
-    return res.status(401).json({ error: 'Invalid participant credentials' });
-  }
-  res.json(participant);
+api.get('/tracks', (_req, res) => {
+  res.json(getTracks().filter((track) => track.is_active));
 });
 
 api.get('/participants/projects', (req, res) => {
@@ -327,7 +374,7 @@ api.get('/participants/projects', (req, res) => {
 
 api.post('/participants/projects', (req, res) => {
   const {
-    participantId,
+    participantName,
     projectName,
     teamName,
     teamMembers,
@@ -346,9 +393,30 @@ api.post('/participants/projects', (req, res) => {
     submissionStatus,
   } = req.body;
 
-  const participant = getParticipantById(Number(participantId));
+  if (!participantName || !teamName || !contactEmail || !projectName || !track) {
+    return res.status(400).json({ error: 'participantName, teamName, contactEmail, projectName, and track are required' });
+  }
+  ensureTrackExists(track);
+  let participant = getParticipantByEmail(contactEmail);
   if (!participant) {
-    return res.status(400).json({ error: 'Valid participant is required' });
+    const userResult = db.prepare(`
+      INSERT INTO users (name, email, password_hash, role, status)
+      VALUES (?, ?, '', 'participant', 'active')
+    `).run(participantName.trim(), contactEmail.trim());
+    db.prepare(`
+      INSERT INTO participants (user_id, team_name, contact_email, school_name)
+      VALUES (?, ?, ?, ?)
+    `).run(Number(userResult.lastInsertRowid), teamName.trim(), contactEmail.trim(), schoolName || 'UC Berkeley');
+    participant = getParticipantByEmail(contactEmail);
+  } else {
+    db.prepare('UPDATE users SET name = ?, email = ? WHERE id = ?').run(participantName.trim(), contactEmail.trim(), participant.user_id);
+    db.prepare('UPDATE participants SET team_name = ?, contact_email = ?, school_name = ? WHERE id = ?').run(
+      teamName.trim(),
+      contactEmail.trim(),
+      schoolName || participant.school_name || 'UC Berkeley',
+      participant.id,
+    );
+    participant = getParticipantByEmail(contactEmail);
   }
 
   const result = db.prepare(`
@@ -449,15 +517,107 @@ api.post('/judges/login', (req, res) => {
   let judge = getJudgeByCode(normalizedCode);
   if (!judge) {
     db.prepare(`
-      INSERT INTO judges (judge_id, judge_code, name, email, role, weight)
-      VALUES (?, ?, ?, ?, 'standard', 1.0)
-    `).run(normalizedCode, normalizedCode, name.trim(), email.trim());
+      INSERT INTO judges (judge_id, judge_code, name, email, role, weight, account_active, password)
+      VALUES (?, ?, ?, ?, 'standard', 1.0, 1, ?)
+    `).run(normalizedCode, normalizedCode, name.trim(), email.trim(), normalizedCode);
     judge = getJudgeByCode(normalizedCode);
   } else {
+    if (!judge.account_active) {
+      return res.status(403).json({ error: 'Judge account is disabled' });
+    }
     db.prepare('UPDATE judges SET name = ?, email = ? WHERE id = ?').run(name.trim(), email.trim(), judge.id);
     judge = getJudgeByCode(normalizedCode);
   }
   res.json(judge);
+});
+
+api.get('/admin/judges', adminOnly, (_req, res) => {
+  res.json(getJudges());
+});
+
+api.get('/admin/tracks', adminOnly, (_req, res) => {
+  res.json(getTracks());
+});
+
+api.post('/admin/tracks', adminOnly, (req, res) => {
+  const { name, is_active } = req.body;
+  if (!name || !String(name).trim()) return res.status(400).json({ error: 'Track name is required' });
+  ensureTrackExists(name);
+  if (is_active === false) {
+    db.prepare('UPDATE tracks SET is_active = 0 WHERE name = ?').run(String(name).trim());
+  }
+  res.json(getTracks());
+});
+
+api.put('/admin/tracks/:id', adminOnly, (req, res) => {
+  const id = Number(req.params.id);
+  const existing = db.prepare('SELECT * FROM tracks WHERE id = ?').get(id);
+  if (!existing) return res.status(404).json({ error: 'Track not found' });
+
+  const nextName = String(req.body.name || existing.name).trim();
+  const nextActive = req.body.is_active === undefined ? existing.is_active : (req.body.is_active ? 1 : 0);
+  if (!nextName) return res.status(400).json({ error: 'Track name is required' });
+
+  db.prepare('UPDATE tracks SET name = ?, is_active = ? WHERE id = ?').run(nextName, nextActive, id);
+
+  if (nextName !== existing.name) {
+    db.prepare('UPDATE projects SET track = ?, category = ? WHERE track = ?').run(nextName, nextName, existing.name);
+    db.prepare('UPDATE judges SET assigned_track = ? WHERE assigned_track = ?').run(nextName, existing.name);
+    db.prepare('UPDATE judge_assignments SET track = ? WHERE track = ?').run(nextName, existing.name);
+    db.prepare(`
+      UPDATE award_selections
+      SET track = ?, award_key = CASE WHEN award_type = 'track_winner' THEN ? ELSE award_key END, award_label = CASE WHEN award_type = 'track_winner' THEN ? ELSE award_label END
+      WHERE track = ?
+    `).run(nextName, nextName, `${nextName} Winner`, existing.name);
+  }
+
+  res.json(getTracks());
+});
+
+api.delete('/admin/tracks/:id', adminOnly, (req, res) => {
+  const id = Number(req.params.id);
+  const existing = db.prepare('SELECT * FROM tracks WHERE id = ?').get(id);
+  if (!existing) return res.status(404).json({ error: 'Track not found' });
+
+  const projectCount = db.prepare('SELECT COUNT(*) AS count FROM projects WHERE track = ?').get(existing.name).count;
+  const judgeCount = db.prepare('SELECT COUNT(*) AS count FROM judges WHERE assigned_track = ?').get(existing.name).count;
+  if (projectCount > 0 || judgeCount > 0) {
+    return res.status(400).json({ error: 'Track is still assigned to projects or judges' });
+  }
+
+  db.prepare('DELETE FROM award_selections WHERE track = ?').run(existing.name);
+  db.prepare('DELETE FROM tracks WHERE id = ?').run(id);
+  res.json({ ok: true });
+});
+
+api.post('/admin/judges', adminOnly, (req, res) => {
+  const { name, email, judge_code, role, assigned_track, weight, account_active, password } = req.body;
+  if (!name || !email || !judge_code) return res.status(400).json({ error: 'name, email, and judge_code are required' });
+  ensureTrackExists(assigned_track);
+  db.prepare(`
+    INSERT INTO judges (judge_id, judge_code, name, email, role, weight, assigned_track, account_active, password)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(judge_code, judge_code, name, email, role || 'standard', Number(weight || 1), assigned_track || null, account_active === false ? 0 : 1, password || judge_code);
+  res.json(getJudgeByCode(judge_code));
+});
+
+api.put('/admin/judges/:id', adminOnly, (req, res) => {
+  const id = Number(req.params.id);
+  const { name, email, judge_code, role, assigned_track, weight, account_active, password } = req.body;
+  ensureTrackExists(assigned_track);
+  db.prepare(`
+    UPDATE judges
+    SET name = ?, email = ?, judge_code = ?, judge_id = ?, role = ?, assigned_track = ?, weight = ?, account_active = ?, password = ?
+    WHERE id = ?
+  `).run(name, email, judge_code, judge_code, role || 'standard', assigned_track || null, Number(weight || 1), account_active ? 1 : 0, password || judge_code, id);
+  res.json(getJudges().find((judge) => judge.id === id));
+});
+
+api.delete('/admin/judges/:id', adminOnly, (req, res) => {
+  const id = Number(req.params.id);
+  db.prepare('DELETE FROM judge_assignments WHERE judge_id = ?').run(id);
+  db.prepare('DELETE FROM judges WHERE id = ?').run(id);
+  res.json({ ok: true });
 });
 
 api.get('/projects', (req, res) => {
@@ -622,6 +782,8 @@ api.get('/admin/overview', adminOnly, (_req, res) => {
       completionRate: maxPossible ? Math.round((submittedScores.length / maxPossible) * 100) : 0,
       missingScores: getMissingScores().length,
       finalistsCount: leaderboardPayload.leaderboard.filter((entry) => entry.finalist).length,
+      rewardProjectsCount: leaderboardPayload.awards.rewardProjects.length,
+      trackWinnersCount: leaderboardPayload.awards.trackWinners.length,
       pendingSubmissions: projects.filter((project) => project.approval_status === 'under_review').length,
       approvedSubmissions: projects.filter((project) => project.approval_status === 'approved').length,
     },
@@ -632,8 +794,10 @@ api.get('/admin/overview', adminOnly, (_req, res) => {
     settings,
     leaderboard: leaderboardPayload.leaderboard,
     winners: leaderboardPayload.winners,
+    awards: leaderboardPayload.awards,
     missingScores: getMissingScores(),
     tracks: leaderboardPayload.tracks,
+    trackDetails: getTracks(),
   });
 });
 
@@ -643,6 +807,97 @@ api.get('/admin/scores', adminOnly, (_req, res) => {
 
 api.get('/admin/projects', adminOnly, (_req, res) => {
   res.json(getProjects());
+});
+
+api.post('/admin/projects', adminOnly, (req, res) => {
+  const {
+    projectName, teamName, track, shortDescription, fullDescription, tableNumber, demoUrl, githubUrl, pitchDeckUrl,
+    videoUrl, teamMembers, contactEmail, schoolName, submissionStatus, approvalStatus, published, finalist,
+  } = req.body;
+  if (!projectName || !teamName || !track) {
+    return res.status(400).json({ error: 'projectName, teamName, and track are required' });
+  }
+  ensureTrackExists(track);
+  const result = db.prepare(`
+    INSERT INTO projects (
+      name, team, team_name, table_number, category, track, description, short_description, full_description,
+      members_count, demo_url, github_url, pitch_deck_url, video_url, contact_email, school_name, team_member_names,
+      special_prize_categories, submission_status, approval_status, published, consent_accepted, tie_breaker_score, is_finalist, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 0, ?, CURRENT_TIMESTAMP)
+  `).run(
+    projectName,
+    teamName,
+    teamName,
+    tableNumber || 'TBD',
+    track,
+    track,
+    shortDescription || '',
+    shortDescription || '',
+    fullDescription || shortDescription || '',
+    Array.isArray(teamMembers) ? teamMembers.length : 1,
+    demoUrl || '',
+    githubUrl || '',
+    pitchDeckUrl || '',
+    videoUrl || '',
+    contactEmail || '',
+    schoolName || '',
+    JSON.stringify(teamMembers || []),
+    JSON.stringify([]),
+    submissionStatus || 'submitted',
+    approvalStatus || 'under_review',
+    published ? 1 : 0,
+    finalist ? 1 : 0,
+  );
+  res.json(getProjects().find((project) => project.id === Number(result.lastInsertRowid)));
+});
+
+api.put('/admin/projects/:id', adminOnly, (req, res) => {
+  const id = Number(req.params.id);
+  const {
+    projectName, teamName, track, shortDescription, fullDescription, tableNumber, demoUrl, githubUrl, pitchDeckUrl,
+    videoUrl, teamMembers, contactEmail, schoolName, submissionStatus, approvalStatus, published, finalist,
+  } = req.body;
+  ensureTrackExists(track);
+  db.prepare(`
+    UPDATE projects
+    SET name = ?, team = ?, team_name = ?, table_number = ?, category = ?, track = ?, description = ?, short_description = ?,
+        full_description = ?, members_count = ?, demo_url = ?, github_url = ?, pitch_deck_url = ?, video_url = ?, contact_email = ?,
+        school_name = ?, team_member_names = ?, submission_status = ?, approval_status = ?, published = ?, is_finalist = ?, updated_at = CURRENT_TIMESTAMP
+    WHERE id = ?
+  `).run(
+    projectName,
+    teamName,
+    teamName,
+    tableNumber || 'TBD',
+    track,
+    track,
+    shortDescription || '',
+    shortDescription || '',
+    fullDescription || shortDescription || '',
+    Array.isArray(teamMembers) ? teamMembers.length : 1,
+    demoUrl || '',
+    githubUrl || '',
+    pitchDeckUrl || '',
+    videoUrl || '',
+    contactEmail || '',
+    schoolName || '',
+    JSON.stringify(teamMembers || []),
+    submissionStatus || 'submitted',
+    approvalStatus || 'under_review',
+    published ? 1 : 0,
+    finalist ? 1 : 0,
+    id,
+  );
+  res.json(getProjects().find((project) => project.id === id));
+});
+
+api.delete('/admin/projects/:id', adminOnly, (req, res) => {
+  const id = Number(req.params.id);
+  db.prepare('DELETE FROM finalists WHERE project_id = ?').run(id);
+  db.prepare('DELETE FROM judge_assignments WHERE project_id = ?').run(id);
+  db.prepare('DELETE FROM scores WHERE project_id = ?').run(id);
+  db.prepare('DELETE FROM projects WHERE id = ?').run(id);
+  res.json({ ok: true });
 });
 
 api.get('/admin/settings', adminOnly, (_req, res) => {
@@ -717,6 +972,49 @@ api.post('/admin/finalists', adminOnly, (req, res) => {
   res.json({ ok: true, finalists: getProjects().filter((project) => project.is_finalist) });
 });
 
+api.get('/admin/awards', adminOnly, (_req, res) => {
+  res.json(getAwardSelections());
+});
+
+api.post('/admin/awards', adminOnly, (req, res) => {
+  const { rewardProjectIds, trackWinners } = req.body;
+
+  if (rewardProjectIds && !Array.isArray(rewardProjectIds)) {
+    return res.status(400).json({ error: 'rewardProjectIds must be an array' });
+  }
+  if (trackWinners && (typeof trackWinners !== 'object' || Array.isArray(trackWinners))) {
+    return res.status(400).json({ error: 'trackWinners must be an object keyed by track' });
+  }
+
+  db.prepare(`DELETE FROM award_selections WHERE award_type = 'reward_project'`).run();
+  db.prepare(`DELETE FROM award_selections WHERE award_type = 'track_winner'`).run();
+
+  const insert = db.prepare(`
+    INSERT OR REPLACE INTO award_selections (award_type, award_key, award_label, track, project_id)
+    VALUES (?, ?, ?, ?, ?)
+  `);
+
+  (rewardProjectIds || []).forEach((projectId, index) => {
+    const project = getProjectById(Number(projectId));
+    if (!project) return;
+    insert.run('reward_project', `reward-${index + 1}`, `Reward Project ${index + 1}`, null, Number(projectId));
+  });
+
+  Object.entries(trackWinners || {}).forEach(([track, projectId]) => {
+    const project = getProjectById(Number(projectId));
+    if (!project) return;
+    insert.run('track_winner', track, `${track} Winner`, track, Number(projectId));
+  });
+
+  res.json({
+    ok: true,
+    awards: {
+      rewardProjects: getAwardSelections().filter((award) => award.award_type === 'reward_project'),
+      trackWinners: getAwardSelections().filter((award) => award.award_type === 'track_winner'),
+    },
+  });
+});
+
 api.get('/admin/export.csv', adminOnly, (_req, res) => {
   const leaderboardPayload = getLeaderboardPayload();
   const rows = [
@@ -755,6 +1053,36 @@ api.get('/admin/export.csv', adminOnly, (_req, res) => {
   res.setHeader('Content-Type', 'text/csv');
   res.setHeader('Content-Disposition', 'attachment; filename="hackscore-export.csv"');
   res.send(toCsv(rows));
+});
+
+api.post('/admin/demo-data/reset', adminOnly, (_req, res) => {
+  resetDemoData();
+  res.json({
+    ok: true,
+    stats: {
+      projects: db.prepare('SELECT COUNT(*) AS count FROM projects').get().count,
+      judges: db.prepare('SELECT COUNT(*) AS count FROM judges').get().count,
+      scores: db.prepare('SELECT COUNT(*) AS count FROM scores').get().count,
+      tracks: db.prepare('SELECT COUNT(*) AS count FROM tracks').get().count,
+    },
+  });
+});
+
+api.post('/admin/demo-data/seed', adminOnly, (_req, res) => {
+  seedDemoData();
+  const overview = getLeaderboardPayload();
+  res.json({
+    ok: true,
+    stats: {
+      projects: db.prepare('SELECT COUNT(*) AS count FROM projects').get().count,
+      judges: db.prepare('SELECT COUNT(*) AS count FROM judges').get().count,
+      scores: db.prepare('SELECT COUNT(*) AS count FROM scores').get().count,
+      tracks: db.prepare('SELECT COUNT(*) AS count FROM tracks').get().count,
+      finalists: db.prepare('SELECT COUNT(*) AS count FROM finalists').get().count,
+      rewardProjects: overview.awards.rewardProjects.length,
+      trackWinners: overview.awards.trackWinners.length,
+    },
+  });
 });
 
 app.use('/api', api);

@@ -3,6 +3,7 @@ import { Link, useNavigate, useParams } from 'react-router-dom';
 import Toast from '../components/Toast';
 import { getConfig, getProjects, getScores, submitScore } from '../lib/api';
 import type { AdminSettings, Judge, Project, ScoreForm } from '../types';
+import useDeviceMode from '../hooks/useDeviceMode';
 
 interface Props {
   judge: Judge;
@@ -22,6 +23,7 @@ const defaultForm = (): ScoreForm => ({
 const STORAGE_KEY = (judgeCode: string, projectId: string) => `hackscore:draft:${judgeCode}:${projectId}`;
 
 export default function ScoringPage({ judge }: Props) {
+  const { isMobile, deviceLabel } = useDeviceMode();
   const { projectId = '' } = useParams();
   const navigate = useNavigate();
   const [projects, setProjects] = useState<Project[]>([]);
@@ -137,23 +139,24 @@ export default function ScoringPage({ judge }: Props) {
         <Link to="/projects" className="font-medium text-slate-700 hover:text-slate-950">Projects</Link>
         <span>/</span>
         <span>{project.name}</span>
+        <span className="badge pill-muted">{deviceLabel}</span>
       </div>
 
       <section className="grid gap-4 xl:grid-cols-[1.15fr_0.85fr]">
         <div className="card p-6 sm:p-8">
-          <div className="flex flex-wrap items-start justify-between gap-4">
+          <div className={`flex items-start justify-between gap-4 ${isMobile ? 'flex-col' : 'flex-wrap'}`}>
             <div>
               <div className="flex flex-wrap items-center gap-2">
                 <span className="badge bg-teal-50 text-teal-700">{project.track}</span>
                 <span className="badge bg-slate-100 text-slate-700">Table {project.table_number}</span>
                 {project.is_finalist && <span className="badge bg-orange-50 text-orange-700">Finalist</span>}
               </div>
-              <h1 className="mt-4 font-display text-4xl font-bold text-slate-950">{project.name}</h1>
+              <h1 className="mt-4 font-display text-3xl font-bold text-slate-950 sm:text-4xl">{project.name}</h1>
               <p className="mt-2 text-lg font-semibold text-slate-600">{project.team_name}</p>
               <p className="mt-4 max-w-3xl text-sm leading-7 text-slate-600">{project.description}</p>
             </div>
 
-            <div className="rounded-[28px] bg-slate-950 px-5 py-4 text-white">
+            <div className={`rounded-[28px] bg-slate-950 px-5 py-4 text-white ${isMobile ? 'w-full' : ''}`}>
               <div className="text-xs uppercase tracking-[0.2em] text-slate-300">Live total</div>
               <div className="mt-2 font-display text-5xl font-bold">{total}</div>
               <div className="text-sm text-slate-300">out of {settings.score_scale_max * criteria.length}</div>
@@ -186,7 +189,9 @@ export default function ScoringPage({ judge }: Props) {
               </a>
             )}
             <div className="rounded-[24px] bg-slate-50 p-4 text-sm text-slate-600">
-              Drafts are also kept in local storage so the form survives brief connectivity issues.
+              {isMobile
+                ? 'Mobile mode keeps the scoring controls large and the draft stored locally during brief connectivity issues.'
+                : 'Drafts are also kept in local storage so the form survives brief connectivity issues.'}
             </div>
           </div>
         </div>
@@ -205,7 +210,7 @@ export default function ScoringPage({ judge }: Props) {
               </div>
             </div>
 
-            <div className="grid grid-cols-5 gap-2 sm:grid-cols-10">
+            <div className={`grid gap-2 ${isMobile ? 'grid-cols-5' : 'grid-cols-5 sm:grid-cols-10'}`}>
               {scoreRange.map((value) => {
                 const active = form[criterion.criterion_key as keyof ScoreForm] === value;
                 return (
@@ -271,7 +276,7 @@ export default function ScoringPage({ judge }: Props) {
       )}
 
       <div className="fixed inset-x-0 bottom-0 z-40 border-t border-slate-200 bg-white/95 px-4 py-3 backdrop-blur-xl sm:px-6">
-        <div className="mx-auto flex max-w-7xl flex-col gap-3 sm:flex-row">
+        <div className={`mx-auto flex max-w-7xl gap-3 ${isMobile ? 'flex-col' : 'flex-col sm:flex-row'}`}>
           <button type="button" className="btn-secondary flex-1" onClick={handleSaveDraft} disabled={saving}>
             Save draft
           </button>

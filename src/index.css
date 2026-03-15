@@ -77,6 +77,18 @@
   animation: toastIn 0.22s ease-out both;
 }
 
+@media (pointer: coarse) {
+  .btn-primary,
+  .btn-secondary,
+  .input {
+    min-height: 48px;
+  }
+
+  .score-chip {
+    @apply h-14 text-lg;
+  }
+}
+
 @keyframes fadeIn {
   from {
     opacity: 0;

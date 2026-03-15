@@ -2,12 +2,14 @@ import { FormEvent, useState } from 'react';
 import { login } from '../lib/api';
 import type { Judge } from '../types';
 import Toast from '../components/Toast';
+import useDeviceMode from '../hooks/useDeviceMode';
 
 interface Props {
   onLogin: (judge: Judge) => void;
 }
 
 export default function Login({ onLogin }: Props) {
+  const { isMobile, deviceLabel } = useDeviceMode();
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [judgeCode, setJudgeCode] = useState('');
@@ -31,14 +33,14 @@ export default function Login({ onLogin }: Props) {
   return (
     <div className="grid gap-6 lg:grid-cols-[1.1fr_0.9fr]">
       <section className="card animate-fade-in overflow-hidden">
-        <div className="grid gap-10 px-6 py-8 sm:px-8 lg:grid-cols-[1.1fr_0.9fr] lg:p-10">
+        <div className="grid gap-8 px-5 py-6 sm:px-8 lg:grid-cols-[1.1fr_0.9fr] lg:p-10">
           <div className="space-y-6">
             <div className="inline-flex items-center rounded-full bg-teal-50 px-3 py-1 text-xs font-semibold uppercase tracking-[0.24em] text-teal-700">
-              Demo day ready
+              {deviceLabel} mode
             </div>
             <div className="space-y-4">
-              <h1 className="font-display text-4xl font-bold tracking-tight text-slate-950 sm:text-5xl">
-                Score projects fast. Keep rankings live.
+              <h1 className="font-display text-3xl font-bold tracking-tight text-slate-950 sm:text-5xl">
+                {isMobile ? 'Score fast on mobile.' : 'Score projects fast. Keep rankings live.'}
               </h1>
               <p className="max-w-xl text-base leading-7 text-slate-600">
                 Built for university hackathons where judges walk table to table, organizers monitor coverage,
@@ -50,7 +52,7 @@ export default function Login({ onLogin }: Props) {
               {[
                 ['<15s', 'target scoring time'],
                 ['12+', 'sample projects preloaded'],
-                ['4', 'leaderboard modes'],
+                [isMobile ? 'Tap' : '4', isMobile ? 'optimized input flow' : 'leaderboard modes'],
               ].map(([value, label]) => (
                 <div key={label} className="rounded-3xl border border-slate-200 bg-slate-50 px-4 py-4">
                   <div className="font-display text-3xl font-bold text-slate-950">{value}</div>

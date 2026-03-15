@@ -6,6 +6,16 @@ export interface Judge {
   role: 'standard' | 'sponsor' | 'expert' | string;
   weight: number;
   assigned_track: string | null;
+  account_active?: boolean;
+  password?: string;
+  created_at?: string;
+}
+
+export interface Track {
+  id: number;
+  name: string;
+  is_active: boolean;
+  sort_order?: number;
   created_at?: string;
 }
 
@@ -39,6 +49,20 @@ export interface Project {
   created_at?: string;
   status?: 'unscored' | 'draft' | 'scored';
   my_score?: Score | null;
+}
+
+export interface AwardSelection {
+  id: number;
+  award_type: 'reward_project' | 'track_winner' | string;
+  award_key: string;
+  award_label: string;
+  track?: string | null;
+  project_id: number;
+  project_name: string;
+  team_name: string;
+  table_number: string;
+  project_track: string;
+  created_at?: string;
 }
 
 export interface Score {
@@ -85,6 +109,7 @@ export interface AdminSettings {
   leaderboard_public: boolean;
   updated_at?: string;
   criteria_weights: CriterionWeight[];
+  tracks?: string[];
 }
 
 export interface LeaderboardEntry {
@@ -103,6 +128,9 @@ export interface LeaderboardEntry {
   finalist: boolean;
   criterion_averages: Record<string, number | null>;
   tie_breaker_score: number;
+  awards?: AwardSelection[];
+  is_reward_project?: boolean;
+  track_winner_label?: string | null;
 }
 
 export interface LeaderboardPayload {
@@ -114,6 +142,10 @@ export interface LeaderboardPayload {
     bestDesign: LeaderboardEntry | null;
     bestTechnical: LeaderboardEntry | null;
     audienceFavorite: LeaderboardEntry | null;
+  };
+  awards: {
+    rewardProjects: AwardSelection[];
+    trackWinners: AwardSelection[];
   };
   tracks: string[];
 }
@@ -142,6 +174,8 @@ export interface AdminOverview {
     completionRate: number;
     missingScores: number;
     finalistsCount: number;
+    rewardProjectsCount: number;
+    trackWinnersCount: number;
     pendingSubmissions: number;
     approvedSubmissions: number;
   };
@@ -152,8 +186,10 @@ export interface AdminOverview {
   settings: AdminSettings;
   leaderboard: LeaderboardEntry[];
   winners: LeaderboardPayload['winners'];
+  awards: LeaderboardPayload['awards'];
   missingScores: MissingScore[];
   tracks: string[];
+  trackDetails: Track[];
 }
 
 export interface ScoreForm {
@@ -177,10 +213,10 @@ export interface Participant {
   name: string;
   email: string;
   status: string;
-  password_hash?: string;
 }
 
 export interface ParticipantProjectForm {
+  participantName: string;
   projectName: string;
   teamName: string;
   teamMembers: string[];

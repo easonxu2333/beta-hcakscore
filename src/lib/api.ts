@@ -1,15 +1,14 @@
 import type {
+  AwardSelection,
   AdminOverview,
   AdminSettings,
   Judge,
-  JudgeProgress,
   LeaderboardPayload,
-  MissingScore,
-  Participant,
   ParticipantProjectForm,
   Project,
   Score,
   ScoreForm,
+  Track,
 } from '../types';
 
 const BASE = '/api';
@@ -28,6 +27,7 @@ async function req<T>(url: string, opts?: RequestInit): Promise<T> {
 }
 
 export const getConfig = () => req<AdminSettings>('/config');
+export const getTracks = () => req<Track[]>('/tracks');
 
 export const login = (name: string, email: string, judgeCode: string) =>
   req<Judge>('/judges/login', {
@@ -42,31 +42,13 @@ export const getProjects = (judgeCode?: string, track?: string) => {
   return req<Project[]>(`/projects?${qs}`);
 };
 
-export const participantRegister = (payload: {
-  name: string;
-  email: string;
-  password: string;
-  teamName: string;
-  schoolName: string;
-}) =>
-  req<Participant>('/participants/register', {
-    method: 'POST',
-    body: JSON.stringify(payload),
-  });
-
-export const participantLogin = (email: string, password: string) =>
-  req<Participant>('/participants/login', {
-    method: 'POST',
-    body: JSON.stringify({ email, password }),
-  });
-
 export const getParticipantProjects = (participantId: number) =>
   req<Project[]>(`/participants/projects?participantId=${participantId}`);
 
-export const createParticipantProject = (participantId: number, payload: ParticipantProjectForm) =>
+export const createParticipantProject = (payload: ParticipantProjectForm) =>
   req<Project>('/participants/projects', {
     method: 'POST',
-    body: JSON.stringify({ participantId, ...payload }),
+    body: JSON.stringify(payload),
   });
 
 export const updateParticipantProject = (projectId: number, payload: ParticipantProjectForm) =>
@@ -106,7 +88,7 @@ export const getAdminProjects = (password: string) =>
   req<Project[]>(`/admin/projects?password=${encodeURIComponent(password)}`);
 
 export const getAdminJudges = (password: string) =>
-  req<JudgeProgress[]>(`/judges?password=${encodeURIComponent(password)}`);
+  req<Judge[]>(`/admin/judges?password=${encodeURIComponent(password)}`);
 
 export const getAdminSettings = (password: string) =>
   req<AdminSettings>(`/admin/settings?password=${encodeURIComponent(password)}`);
@@ -117,9 +99,6 @@ export const updateAdminSettings = (password: string, payload: Partial<AdminSett
     body: JSON.stringify({ ...payload, password }),
   });
 
-export const getMissingScores = (password: string) =>
-  req<MissingScore[]>(`/admin/missing-scores?password=${encodeURIComponent(password)}`);
-
 export const updateFinalists = (password: string, projectIds: number[]) =>
   req<{ ok: boolean }>('/admin/finalists', {
     method: 'POST',
@@ -128,3 +107,72 @@ export const updateFinalists = (password: string, projectIds: number[]) =>
 
 export const getCsvExportUrl = (password: string) =>
   `${BASE}/admin/export.csv?password=${encodeURIComponent(password)}`;
+
+export const getAdminAwards = (password: string) =>
+  req<AwardSelection[]>(`/admin/awards?password=${encodeURIComponent(password)}`);
+
+export const getAdminTracks = (password: string) =>
+  req<Track[]>(`/admin/tracks?password=${encodeURIComponent(password)}`);
+
+export const createAdminTrack = (password: string, payload: Partial<Track>) =>
+  req<Track[]>('/admin/tracks', {
+    method: 'POST',
+    body: JSON.stringify({ ...payload, password }),
+  });
+
+export const updateAdminTrack = (password: string, id: number, payload: Partial<Track>) =>
+  req<Track[]>(`/admin/tracks/${id}`, {
+    method: 'PUT',
+    body: JSON.stringify({ ...payload, password }),
+  });
+
+export const deleteAdminTrack = (password: string, id: number) =>
+  req<{ ok: boolean }>(`/admin/tracks/${id}`, {
+    method: 'DELETE',
+    body: JSON.stringify({ password }),
+  });
+
+export const updateAdminAwards = (
+  password: string,
+  payload: { rewardProjectIds: number[]; trackWinners: Record<string, number> },
+) =>
+  req<{ ok: boolean; awards: AdminOverview['awards'] }>('/admin/awards', {
+    method: 'POST',
+    body: JSON.stringify({ ...payload, password }),
+  });
+
+export const createJudge = (password: string, payload: Partial<Judge>) =>
+  req<Judge>('/admin/judges', {
+    method: 'POST',
+    body: JSON.stringify({ ...payload, password }),
+  });
+
+export const updateJudge = (password: string, id: number, payload: Partial<Judge>) =>
+  req<Judge>(`/admin/judges/${id}`, {
+    method: 'PUT',
+    body: JSON.stringify({ ...payload, password }),
+  });
+
+export const deleteJudge = (password: string, id: number) =>
+  req<{ ok: boolean }>(`/admin/judges/${id}`, {
+    method: 'DELETE',
+    body: JSON.stringify({ password }),
+  });
+
+export const createAdminProject = (password: string, payload: Record<string, unknown>) =>
+  req<Project>('/admin/projects', {
+    method: 'POST',
+    body: JSON.stringify({ ...payload, password }),
+  });
+
+export const updateAdminProject = (password: string, id: number, payload: Record<string, unknown>) =>
+  req<Project>(`/admin/projects/${id}`, {
+    method: 'PUT',
+    body: JSON.stringify({ ...payload, password }),
+  });
+
+export const deleteAdminProject = (password: string, id: number) =>
+  req<{ ok: boolean }>(`/admin/projects/${id}`, {
+    method: 'DELETE',
+    body: JSON.stringify({ password }),
+  });

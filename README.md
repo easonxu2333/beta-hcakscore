@@ -1,4 +1,4 @@
-# BETA Hackscore
+# BETA HackScore
 
 A live-event hackathon judging system optimized for judges on phones, organizers tracking scoring coverage, and public leaderboard displays.
 

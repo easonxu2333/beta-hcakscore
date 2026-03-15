@@ -59,6 +59,8 @@ function ensureSchema() {
       role TEXT DEFAULT 'standard',
       weight REAL DEFAULT 1.0,
       assigned_track TEXT,
+      account_active INTEGER DEFAULT 1,
+      password TEXT,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     );
 
@@ -130,6 +132,25 @@ function ensureSchema() {
       round_name TEXT DEFAULT 'final',
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     );
+
+    CREATE TABLE IF NOT EXISTS award_selections (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      award_type TEXT NOT NULL,
+      award_key TEXT NOT NULL,
+      award_label TEXT NOT NULL,
+      track TEXT,
+      project_id INTEGER NOT NULL,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(award_type, award_key)
+    );
+
+    CREATE TABLE IF NOT EXISTS tracks (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT UNIQUE NOT NULL,
+      is_active INTEGER DEFAULT 1,
+      sort_order INTEGER DEFAULT 0,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
   `);
 
   addColumnIfMissing('judges', 'judge_id', 'TEXT');
@@ -137,6 +158,8 @@ function ensureSchema() {
   addColumnIfMissing('judges', 'role', "TEXT DEFAULT 'standard'");
   addColumnIfMissing('judges', 'weight', 'REAL DEFAULT 1.0');
   addColumnIfMissing('judges', 'assigned_track', 'TEXT');
+  addColumnIfMissing('judges', 'account_active', 'INTEGER DEFAULT 1');
+  addColumnIfMissing('judges', 'password', 'TEXT');
 
   addColumnIfMissing('projects', 'team', 'TEXT');
   addColumnIfMissing('projects', 'team_name', 'TEXT');
@@ -185,6 +208,11 @@ function ensureSchema() {
     UPDATE judges
     SET judge_code = COALESCE(judge_code, judge_id)
     WHERE judge_code IS NULL AND judge_id IS NOT NULL;
+
+    UPDATE judges
+    SET account_active = COALESCE(account_active, 1),
+        password = COALESCE(password, judge_code)
+    WHERE 1 = 1;
 
     UPDATE projects
     SET team_name = COALESCE(team_name, team)
@@ -239,6 +267,22 @@ function seedSettings() {
     VALUES (?, ?, ?)
   `);
   weights.forEach((row) => insertWeight.run(...row));
+}
+
+function seedTracks() {
+  const defaults = ['AI', 'Web3', 'HealthTech', 'FinTech', 'Consumer', 'Open Innovation'];
+  const existingProjectTracks = db.prepare('SELECT DISTINCT track FROM projects WHERE track IS NOT NULL AND trim(track) != \'\'').all();
+  const names = Array.from(new Set([
+    ...defaults,
+    ...existingProjectTracks.map((row) => row.track),
+  ]));
+
+  const insertTrack = db.prepare(`
+    INSERT OR IGNORE INTO tracks (name, is_active, sort_order)
+    VALUES (?, 1, ?)
+  `);
+
+  names.forEach((name, index) => insertTrack.run(name, index + 1));
 }
 
 function seedProjects() {
@@ -338,17 +382,17 @@ function seedJudges() {
 
   db.prepare('DELETE FROM judges').run();
   const judges = [
-    ['JUDGE-AI-01', 'Dr. Sarah Chen', 'sarah.chen@university.edu', 'expert', 1.2, 'AI'],
-    ['JUDGE-HLTH-02', 'Marcus Patel', 'marcus.patel@hospital.org', 'expert', 1.2, 'HealthTech'],
-    ['JUDGE-WEB3-03', 'Avery Brooks', 'avery@web3fund.com', 'sponsor', 0.8, 'Web3'],
-    ['JUDGE-FIN-04', 'Naomi Rivera', 'naomi@finlab.io', 'standard', 1.0, 'FinTech'],
-    ['JUDGE-OPEN-05', 'Priya Desai', 'priya@startupstudio.com', 'standard', 1.0, 'Open Innovation'],
-    ['JUDGE-FLOAT-06', 'Leo Martinez', 'leo@designcollective.co', 'expert', 1.1, null],
+    ['JUDGE-AI-01', 'Dr. Sarah Chen', 'sarah.chen@university.edu', 'expert', 1.2, 'AI', 1, 'JUDGE-AI-01'],
+    ['JUDGE-HLTH-02', 'Marcus Patel', 'marcus.patel@hospital.org', 'expert', 1.2, 'HealthTech', 1, 'JUDGE-HLTH-02'],
+    ['JUDGE-WEB3-03', 'Avery Brooks', 'avery@web3fund.com', 'sponsor', 0.8, 'Web3', 1, 'JUDGE-WEB3-03'],
+    ['JUDGE-FIN-04', 'Naomi Rivera', 'naomi@finlab.io', 'standard', 1.0, 'FinTech', 1, 'JUDGE-FIN-04'],
+    ['JUDGE-OPEN-05', 'Priya Desai', 'priya@startupstudio.com', 'standard', 1.0, 'Open Innovation', 1, 'JUDGE-OPEN-05'],
+    ['JUDGE-FLOAT-06', 'Leo Martinez', 'leo@designcollective.co', 'expert', 1.1, null, 1, 'JUDGE-FLOAT-06'],
   ];
 
   const insert = db.prepare(`
-    INSERT INTO judges (judge_id, judge_code, name, email, role, weight, assigned_track)
-    VALUES (?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO judges (judge_id, judge_code, name, email, role, weight, assigned_track, account_active, password)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
   judges.forEach((judge) => insert.run(judge[0], ...judge));
 }
@@ -389,8 +433,9 @@ function seedScores() {
 
   judges.forEach((judge, judgeIndex) => {
     const visibleProjects = projects.filter((project, projectIndex) => {
-      if (judge.assigned_track && project.track !== judge.assigned_track && judgeIndex !== 5) return false;
-      return projectIndex < 7 || (projectIndex + judgeIndex) % 3 === 0;
+      if (!judge.assigned_track) return true;
+      if (project.track === judge.assigned_track) return true;
+      return (projectIndex + judgeIndex) % 4 === 0;
     });
 
     visibleProjects.forEach((project, projectIndex) => {
@@ -439,19 +484,77 @@ function seedFinalists() {
   finalistProjects.forEach((project) => insert.run(project.id, 'final'));
 }
 
-function initDb() {
-  ensureSchema();
-  seedSettings();
+function seedAwards() {
+  const count = db.prepare('SELECT COUNT(*) AS count FROM award_selections').get().count;
+  if (count > 0) return;
+
+  const projectByTrack = db.prepare(`
+    SELECT id, name, track
+    FROM projects
+    WHERE approval_status = 'approved'
+    ORDER BY tie_breaker_score DESC, created_at ASC
+  `).all();
+  const firstByTrack = new Map();
+  projectByTrack.forEach((project) => {
+    if (!firstByTrack.has(project.track)) {
+      firstByTrack.set(project.track, project);
+    }
+  });
+
+  const rewardProjects = db.prepare(`
+    SELECT id, name
+    FROM projects
+    WHERE approval_status = 'approved'
+    ORDER BY tie_breaker_score DESC, created_at ASC
+    LIMIT 2
+  `).all();
+
+  const insert = db.prepare(`
+    INSERT OR IGNORE INTO award_selections (award_type, award_key, award_label, track, project_id)
+    VALUES (?, ?, ?, ?, ?)
+  `);
+
+  rewardProjects.forEach((project, index) => {
+    insert.run('reward_project', `reward-${index + 1}`, `Reward Project ${index + 1}`, null, project.id);
+  });
+
+  Array.from(firstByTrack.entries()).forEach(([track, project]) => {
+    insert.run('track_winner', track, `${track} Winner`, track, project.id);
+  });
+}
+
+function resetDemoData() {
+  db.prepare('DELETE FROM award_selections').run();
+  db.prepare('DELETE FROM finalists').run();
+  db.prepare('DELETE FROM scores').run();
+  db.prepare('DELETE FROM judge_assignments').run();
+  db.prepare('DELETE FROM judges').run();
+  db.prepare('DELETE FROM projects').run();
+  db.prepare('DELETE FROM participants').run();
+  db.prepare("DELETE FROM users WHERE role IN ('participant', 'admin')").run();
+  db.prepare('DELETE FROM tracks').run();
+}
+
+function seedDemoData() {
+  seedTracks();
   seedProjects();
   seedParticipants();
   seedJudges();
   seedAssignments();
   seedScores();
   seedFinalists();
+  seedAwards();
+}
+
+function initDb() {
+  ensureSchema();
+  seedSettings();
 }
 
 module.exports = {
   CRITERION_KEYS,
   db,
   initDb,
+  resetDemoData,
+  seedDemoData,
 };

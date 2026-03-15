@@ -1,10 +1,12 @@
 import { useEffect, useMemo, useState } from 'react';
 import { getLeaderboard } from '../lib/api';
 import type { LeaderboardPayload } from '../types';
+import useDeviceMode from '../hooks/useDeviceMode';
 
 const REFRESH_MS = 5000;
 
 export default function Leaderboard() {
+  const { isMobile, deviceLabel } = useDeviceMode();
   const [payload, setPayload] = useState<LeaderboardPayload | null>(null);
   const [track, setTrack] = useState('all');
   const [view, setView] = useState<'overall' | 'finalists'>('overall');
@@ -29,7 +31,7 @@ export default function Leaderboard() {
     };
   }, [track, view]);
 
-  const topTen = useMemo(() => payload?.leaderboard.slice(0, 10) || [], [payload]);
+  const topEntries = useMemo(() => payload?.leaderboard.slice(0, isMobile ? 5 : 10) || [], [payload, isMobile]);
 
   if (loading || !payload) {
     return <div className="card p-12 text-center text-slate-500">Loading live leaderboard...</div>;
@@ -41,7 +43,7 @@ export default function Leaderboard() {
         <div className="grid gap-6 px-6 py-8 sm:px-8 lg:grid-cols-[1.05fr_0.95fr]">
           <div>
             <div className="inline-flex items-center rounded-full bg-orange-50 px-3 py-1 text-xs font-semibold uppercase tracking-[0.24em] text-orange-700">
-              Public display mode
+              {deviceLabel} display mode
             </div>
             <h1 className="mt-4 font-display text-4xl font-bold text-slate-950 sm:text-5xl">Hackathon leaderboard</h1>
             <p className="mt-3 max-w-2xl text-sm leading-7 text-slate-600">
@@ -90,10 +92,10 @@ export default function Leaderboard() {
 
       <section className="grid gap-4 xl:grid-cols-[1.25fr_0.75fr]">
         <div className="space-y-4">
-          {topTen.map((entry, index) => (
+          {topEntries.map((entry, index) => (
             <article
               key={entry.id}
-              className={`card flex items-center gap-5 p-5 sm:p-6 ${index < 3 ? 'ring-1 ring-orange-200' : ''}`}
+              className={`card gap-5 p-5 sm:p-6 ${isMobile ? 'flex flex-col items-start' : 'flex items-center'} ${index < 3 ? 'ring-1 ring-orange-200' : ''}`}
             >
               <div className={`flex h-16 w-16 shrink-0 items-center justify-center rounded-[22px] font-display text-2xl font-bold ${
                 index === 0 ? 'bg-slate-950 text-white' :
@@ -109,6 +111,8 @@ export default function Leaderboard() {
                   <h2 className="font-display text-2xl font-bold text-slate-950">{entry.name}</h2>
                   <span className="badge bg-slate-100 text-slate-700">{entry.track}</span>
                   {entry.finalist && <span className="badge bg-orange-50 text-orange-700">Finalist</span>}
+                  {entry.is_reward_project && <span className="badge bg-amber-100 text-amber-800">Reward Project</span>}
+                  {entry.track_winner_label && <span className="badge bg-blue-100 text-blue-800">{entry.track_winner_label}</span>}
                 </div>
                 <div className="mt-2 text-sm text-slate-500">{entry.team_name} • Table {entry.table_number}</div>
                 <div className="mt-4 grid gap-2 sm:grid-cols-5">
@@ -127,7 +131,7 @@ export default function Leaderboard() {
                 </div>
               </div>
 
-              <div className="text-right">
+              <div className={`${isMobile ? 'w-full text-left' : 'text-right'}`}>
                 <div className="font-display text-4xl font-bold text-slate-950">
                   {entry.average_score?.toFixed(1) || '—'}
                 </div>
@@ -156,17 +160,38 @@ export default function Leaderboard() {
           </div>
 
           <div className="card p-6">
-            <div className="text-sm font-semibold uppercase tracking-[0.24em] text-slate-400">Track winners</div>
+            <div className="text-sm font-semibold uppercase tracking-[0.24em] text-slate-400">Manual winners</div>
             <div className="mt-4 space-y-3">
-              {Object.entries(payload.winners.byTrack).map(([winnerTrack, winner]) => (
-                <div key={winnerTrack} className="flex items-center justify-between rounded-2xl bg-slate-50 px-4 py-3">
+              {payload.awards.rewardProjects.map((award) => (
+                <div key={award.id} className="flex items-center justify-between rounded-2xl bg-amber-50 px-4 py-3">
                   <div>
-                    <div className="text-xs uppercase tracking-[0.2em] text-slate-400">{winnerTrack}</div>
-                    <div className="font-semibold text-slate-900">{winner.name}</div>
+                    <div className="text-xs uppercase tracking-[0.2em] text-amber-700">{award.award_label}</div>
+                    <div className="font-semibold text-slate-900">{award.project_name}</div>
                   </div>
-                  <div className="text-sm font-semibold text-slate-500">{winner.average_score?.toFixed(1) || '—'}</div>
+                  <div className="text-sm text-slate-500">{award.team_name}</div>
                 </div>
               ))}
+              {payload.awards.rewardProjects.length === 0 && (
+                <div className="rounded-2xl bg-slate-50 px-4 py-3 text-sm text-slate-500">No reward projects selected.</div>
+              )}
+            </div>
+          </div>
+
+          <div className="card p-6">
+            <div className="text-sm font-semibold uppercase tracking-[0.24em] text-slate-400">Track winners</div>
+            <div className="mt-4 space-y-3">
+              {payload.awards.trackWinners.map((award) => (
+                <div key={award.id} className="flex items-center justify-between rounded-2xl bg-slate-50 px-4 py-3">
+                  <div>
+                    <div className="text-xs uppercase tracking-[0.2em] text-slate-400">{award.track}</div>
+                    <div className="font-semibold text-slate-900">{award.project_name}</div>
+                  </div>
+                  <div className="text-sm font-semibold text-slate-500">{award.team_name}</div>
+                </div>
+              ))}
+              {payload.awards.trackWinners.length === 0 && (
+                <div className="rounded-2xl bg-slate-50 px-4 py-3 text-sm text-slate-500">No track winners selected.</div>
+              )}
             </div>
           </div>
         </aside>
